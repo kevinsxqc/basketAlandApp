@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabaseClient";
+import "./App.css";
 
 type Player = {
   id: string;
@@ -231,12 +232,32 @@ export default function App() {
   // LEADERBOARD
   const leaderboard = players
     .map((p) => {
-      const total = stats
-        .filter((s) => s.player_id === p.id)
-        .reduce((sum, s) => sum + s.plus_minus, 0);
-      return { player: p, total };
+      const playerStats = stats.filter((s) => s.player_id === p.id);
+
+      let wins = 0;
+      let losses = 0;
+      let totalPM = 0;
+
+      for (const st of playerStats) {
+        totalPM += st.plus_minus;
+
+        const game = games.find((g) => g.id === st.game_id);
+        if (!game || game.score_team_a == null || game.score_team_b == null) continue;
+
+        const winnerTeam = game.score_team_a > game.score_team_b ? "A" : "B";
+
+        if (st.team === winnerTeam) wins++;
+        else losses++;
+      }
+
+      return {
+        player: p,
+        totalPM,
+        wins,
+        losses,
+      };
     })
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => b.totalPM - a.totalPM);
 
   const selectedGameObj = games.find((g) => g.id === selectedGame) || null;
   const historyGame = games.find((g) => g.id === historyGameId) || null;
@@ -254,14 +275,16 @@ export default function App() {
     players.find((p) => p.id === id)?.name ?? "(okänd spelare)";
 
   return (
-    <div style={{ padding: 20, maxWidth: 900, margin: "auto" }}>
+    <div className="app">
       <h1>Basket Plus/Minus</h1>
 
       {/* SPELARE */}
-      <section style={{ marginBottom: 24 }}>
-        <h2>Spelare</h2>
+      <section className="card">
+        <div className="card-header">
+          <h2>Spelare</h2>
+        </div>
 
-        <div style={{ marginBottom: 8, display: "flex", gap: 8 }}>
+        <div className="row" style={{ marginBottom: 8 }}>
           <input
             type="text"
             placeholder="Namn på spelare"
@@ -269,6 +292,7 @@ export default function App() {
             onChange={(e) => setNewPlayerName(e.target.value)}
           />
           <button
+            className="btn-primary"
             onClick={async () => {
               const name = newPlayerName.trim();
               if (!name) return;
@@ -292,12 +316,15 @@ export default function App() {
             Lägg till
           </button>
 
-          <button onClick={() => setDeleteMode((v) => !v)}>
+          <button
+            className="btn-ghost"
+            onClick={() => setDeleteMode((v) => !v)}
+          >
             {deleteMode ? "Avsluta ta bort-läge" : "Ta bort spelare"}
           </button>
         </div>
 
-        <ul>
+        <ul className="player-list">
           {players.map((p) => (
             <li
               key={p.id}
@@ -330,9 +357,11 @@ export default function App() {
       </section>
 
       {/* SKAPA MATCH */}
-      <section>
-        <h2>Skapa match</h2>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <section className="card">
+        <div className="card-header">
+          <h2>Skapa match</h2>
+        </div>
+        <div className="row">
           <input
             type="date"
             value={matchDate}
@@ -344,13 +373,15 @@ export default function App() {
             value={matchName}
             onChange={(e) => setMatchName(e.target.value)}
           />
-          <button onClick={createMatch}>Skapa</button>
+          <button className="btn-primary" onClick={createMatch}>Skapa</button>
         </div>
       </section>
 
       {/* VÄLJ MATCH */}
-      <section style={{ marginTop: 16 }}>
-        <h2>Välj match</h2>
+      <section className="card">
+        <div className="card-header">
+          <h2>Välj match</h2>
+        </div>
         <select
           value={selectedGame || ""}
           onChange={(e) => {
@@ -424,10 +455,14 @@ export default function App() {
       {selectedGame && (
         <>
           {/* LAGVAL */}
-          <section style={{ marginTop: 16, display: "flex", gap: 40 }}>
-            <div>
-              <h3>Lag A</h3>
-              {players.map((p) => (
+          <section className="card">
+            <div className="card-header">
+              <h2>Lagindelning</h2>
+            </div>
+            <div className="teams">
+              <div>
+                <h3>Lag A</h3>
+                {players.map((p) => (
                 <div key={p.id}>
                   <label>
                     <input
@@ -472,15 +507,18 @@ export default function App() {
                 </div>
               ))}
             </div>
+          </div>
           </section>
 
-          <button style={{ marginTop: 8 }} onClick={saveTeams} disabled={selectedGameObj?.locked ?? false}>
+          <button className="btn-primary" style={{ marginTop: 8 }} onClick={saveTeams} disabled={selectedGameObj?.locked ?? false}>
             Spara lag
           </button>
 
           {/* RESULTAT */}
-          <section style={{ marginTop: 16 }}>
-            <h2>Resultat</h2>
+          <section className="card">
+            <div className="card-header">
+              <h2>Resultat</h2>
+            </div>
             <div>
               <b>Lag A:</b>{" "}
               <input
@@ -501,7 +539,7 @@ export default function App() {
                 disabled={selectedGameObj?.locked ?? false}
               />
             </div>
-            <button style={{ marginTop: 8 }} onClick={finalizeGame} disabled={selectedGameObj?.locked ?? false}>
+            <button className="btn-primary" style={{ marginTop: 8 }} onClick={finalizeGame} disabled={selectedGameObj?.locked ?? false}>
               Beräkna +/− (sparar resultat)
             </button>
           </section>
@@ -509,9 +547,11 @@ export default function App() {
       )}
 
       {/* LEADERBOARD */}
-      <section style={{ marginTop: 32 }}>
-        <h2>Leaderboard (total plus/minus)</h2>
-        <table border={1} cellPadding={6}>
+      <section className="card">
+        <div className="card-header">
+          <h2>Leaderboard (total plus/minus)</h2>
+        </div>
+        <table>
           <thead>
             <tr>
               <th>Spelare</th>
@@ -522,7 +562,14 @@ export default function App() {
             {leaderboard.map((row) => (
               <tr key={row.player.id}>
                 <td>{row.player.name}</td>
-                <td>{row.total >= 0 ? "+" : ""}{row.total}</td>
+                <td>
+                  {row.totalPM >= 0 ? "+" : ""}
+                  {row.totalPM}
+                  {"  "}
+                  <span style={{ opacity: 0.7, marginLeft: 4 }}>
+                    ({row.wins}/{row.losses})
+                  </span>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -530,9 +577,11 @@ export default function App() {
       </section>
 
       {/* MATCHHISTORIK */}
-      <section style={{ marginTop: 32 }}>
-        <h2>Matchhistorik</h2>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <section className="card">
+        <div className="card-header">
+          <h2>Matchhistorik</h2>
+        </div>
+        <div className="row">
           {games.map((g) => (
             <button
               key={g.id}
