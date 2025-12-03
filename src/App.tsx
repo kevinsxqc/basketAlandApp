@@ -41,7 +41,6 @@ export default function App() {
   const [scoreB, setScoreB] = useState<string>("");
 
   const [selectedGame, setSelectedGame] = useState<string | null>(null);
-  const [historyGameId, setHistoryGameId] = useState<string | null>(null);
 
   const [deleteMode, setDeleteMode] = useState(false);
 
@@ -276,19 +275,6 @@ export default function App() {
     .sort((a, b) => (a.date < b.date ? 1 : -1)); // senaste först
 
   const selectedGameObj = games.find((g) => g.id === selectedGame) || null;
-  const historyGame = games.find((g) => g.id === historyGameId) || null;
-
-  const historyStatsA =
-    historyGameId == null
-      ? []
-      : stats.filter((s) => s.game_id === historyGameId && s.team === "A");
-  const historyStatsB =
-    historyGameId == null
-      ? []
-      : stats.filter((s) => s.game_id === historyGameId && s.team === "B");
-
-  const playerNameById = (id: string) =>
-    players.find((p) => p.id === id)?.name ?? "(okänd spelare)";
 
   const handleLogin = () => {
     const name = loginName.trim();
