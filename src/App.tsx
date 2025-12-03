@@ -50,6 +50,17 @@ export default function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [showPlayerSection, setShowPlayerSection] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
+
+  // vilka är närvarande för träningsschemat
+  const [presentPlayers, setPresentPlayers] = useState<string[]>([]);
+
+  // genererat träningsschema: lista med matcher
+  const [trainingSchedule, setTrainingSchedule] = useState<
+    { gameIndex: number; teamA: string[]; teamB: string[]; bench: string[] }[]
+  >([]);
+
+  const [playersPerTeam, setPlayersPerTeam] = useState(4); // 4v4 som default
 
   useEffect(() => {
     const loadAll = async () => {
@@ -270,6 +281,131 @@ export default function App() {
     })
     .sort((a, b) => b.totalPM - a.totalPM);
 
+  // Tränings-schemagenerator: 3 matcher, 3v3/4v4/5v5, balance +/− och speltid
+  const generateTrainingSchedule = () => {
+    const GAMES_COUNT = 3;                       // hur många matcher per träning
+    const PLAYERS_PER_TEAM = playersPerTeam;     // 3, 4 eller 5
+    const PLAYERS_PER_GAME = PLAYERS_PER_TEAM * 2; // t.ex. 4v4 → 8 spelare
+
+    // ta bara med spelare som är markerade som närvarande
+    const pool = leaderboard.filter((row) =>
+      presentPlayers.includes(row.player.id)
+    );
+
+    if (pool.length < PLAYERS_PER_GAME) {
+      alert(
+        `Behöver minst ${PLAYERS_PER_GAME} närvarande spelare för ${PLAYERS_PER_TEAM}v${PLAYERS_PER_TEAM} (just nu: ${pool.length}).`
+      );
+      return;
+    }
+
+    // alla börjar med 0 matcher spelade
+    const gamesPlayed: Record<string, number> = {};
+    for (const row of pool) {
+      gamesPlayed[row.player.id] = 0;
+    }
+
+    const schedule: {
+      gameIndex: number;
+      teamA: string[];
+      teamB: string[];
+      bench: string[];
+    }[] = [];
+
+    for (let gameIndex = 0; gameIndex < GAMES_COUNT; gameIndex++) {
+      // sortera: först de som spelat minst matcher, sedan högst totalPM
+      const sortedPool = [...pool].sort((a, b) => {
+        const diffPlayed = gamesPlayed[a.player.id] - gamesPlayed[b.player.id];
+        if (diffPlayed !== 0) return diffPlayed;
+        return b.totalPM - a.totalPM;
+      });
+
+      // välj spelare till denna match
+      const participants = sortedPool.slice(0, PLAYERS_PER_GAME);
+
+      // balansera lag A/B både på antal OCH på plus/minus,
+      // men med olika "mönster" per game så lagen blandas
+      const teamA: string[] = [];
+      const teamB: string[] = [];
+      let sumA = 0;
+      let sumB = 0;
+      const TEAM_SIZE = PLAYERS_PER_TEAM;
+
+      const participantsSorted = [...participants].sort(
+        (a, b) => b.totalPM - a.totalPM // starkast först
+      );
+
+      // mönster säger vilket lag varje rankad spelare "helst" ska hamna i
+      // index 0 = bästa spelaren, index 1 = näst bästa osv.
+      let pattern: ("A" | "B")[] = [];
+
+      if (gameIndex % 3 === 0) {
+        // Game 1: klassisk balans – bästa delas upp
+        // 0:A, 1:B, 2:A, 3:B, ...
+        pattern = ["A", "B", "A", "B", "A", "B", "A", "B"];
+      } else if (gameIndex % 3 === 1) {
+        // Game 2: topparna paras mer – 0:A,1:A,2:B,3:B ...
+        pattern = ["A", "A", "B", "B", "A", "A", "B", "B"];
+      } else {
+        // Game 3: blandning – 0:B,1:A,2:A,3:B ...
+        pattern = ["B", "A", "A", "B", "B", "A", "A", "B"];
+      }
+
+      for (let i = 0; i < participantsSorted.length; i++) {
+        const row = participantsSorted[i];
+        const pm = row.totalPM;
+        const id = row.player.id;
+
+        const preferred = pattern[i] ?? (sumA <= sumB ? "A" : "B");
+
+        const putIn = (team: "A" | "B") => {
+          if (team === "A") {
+            teamA.push(id);
+            sumA += pm;
+          } else {
+            teamB.push(id);
+            sumB += pm;
+          }
+        };
+
+        if (preferred === "A") {
+          if (teamA.length < TEAM_SIZE) {
+            putIn("A");
+          } else {
+            putIn("B");
+          }
+        } else {
+          if (teamB.length < TEAM_SIZE) {
+            putIn("B");
+          } else {
+            putIn("A");
+          }
+        }
+      }
+
+      // bänk = alla närvarande som inte spelar denna match
+      const participantIds = new Set(participants.map((p) => p.player.id));
+      const bench = pool
+        .map((p) => p.player.id)
+        .filter((id) => !participantIds.has(id));
+
+      // uppdatera matcher spelade
+      for (const p of participants) {
+        gamesPlayed[p.player.id] += 1;
+      }
+
+      schedule.push({
+        gameIndex,
+        teamA,
+        teamB,
+        bench,
+      });
+    }
+
+    setTrainingSchedule(schedule);
+    alert(`Träningsschema genererat för ${GAMES_COUNT} matcher!`);
+  };
+
   const matchHistory = games
     .filter((g) => g.score_team_a != null && g.score_team_b != null)
     .sort((a, b) => (a.date < b.date ? 1 : -1)); // senaste först
@@ -363,6 +499,140 @@ export default function App() {
         </table>
       </section>
 
+      {/* =========================
+          LAGGENERATOR DROPDOWN
+        ========================= */}
+      <section className="card" style={{ marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+          }}
+          onClick={() => setShowGenerator(!showGenerator)}
+        >
+          <h2>Generera Lag</h2>
+          <span style={{ fontSize: 13, opacity: 0.8 }}>
+            {showGenerator ? "▲ Dölj" : "▼ Visa"}
+          </span>
+        </div>
+
+        {showGenerator && (
+          <>
+            <p style={{ fontSize: 13, opacity: 0.8, marginTop: 8, marginBottom: 8 }}>
+              Kryssa i vilka som är på plats. Välj 3v3, 4v4 eller 5v5 så genereras tre
+              matcher med så jämna lag som möjligt och så jämn speltid som möjligt.
+            </p>
+
+            {/* Välj spelform */}
+            <div style={{ marginBottom: 8 }}>
+              <label style={{ fontSize: 14, marginRight: 8 }}>
+                Spelform:
+                <select
+                  value={playersPerTeam}
+                  onChange={(e) => setPlayersPerTeam(Number(e.target.value))}
+                  style={{ marginLeft: 6 }}
+                >
+                  <option value={3}>3v3</option>
+                  <option value={4}>4v4</option>
+                  <option value={5}>5v5</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Närvarande-spelare */}
+            <div style={{ marginBottom: 8 }}>
+              <h3 style={{ fontSize: 14, marginBottom: 4 }}>Närvarande idag</h3>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {players.map((p) => (
+                  <label key={p.id} style={{ fontSize: 13 }}>
+                    <input
+                      type="checkbox"
+                      checked={presentPlayers.includes(p.id)}
+                      onChange={() => {
+                        if (presentPlayers.includes(p.id)) {
+                          setPresentPlayers(presentPlayers.filter((id) => id !== p.id));
+                        } else {
+                          setPresentPlayers([...presentPlayers, p.id]);
+                        }
+                      }}
+                    />{" "}
+                    {p.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <button onClick={generateTrainingSchedule}>
+              Generera schema (3 matcher)
+            </button>
+
+            {/* Visa genererat schema */}
+            {trainingSchedule.length > 0 && (
+              <div
+                style={{
+                  marginTop: 12,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                {trainingSchedule.map((g) => (
+                  <div
+                    key={g.gameIndex}
+                    style={{
+                      border: "1px solid #4b5563",
+                      borderRadius: 8,
+                      padding: "8px 10px",
+                      background: "#020617",
+                      fontSize: 13,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                      Game {g.gameIndex + 1} ({playersPerTeam}v{playersPerTeam})
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>Lag A</div>
+                        <ul style={{ paddingLeft: 16, margin: 0 }}>
+                          {g.teamA.map((id) => {
+                            const p = players.find((x) => x.id === id);
+                            return <li key={id}>{p?.name ?? "Okänd"}</li>;
+                          })}
+                        </ul>
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>Lag B</div>
+                        <ul style={{ paddingLeft: 16, margin: 0 }}>
+                          {g.teamB.map((id) => {
+                            const p = players.find((x) => x.id === id);
+                            return <li key={id}>{p?.name ?? "Okänd"}</li>;
+                          })}
+                        </ul>
+                      </div>
+                      <div>
+                        <div style={{ fontWeight: 500 }}>Bänk</div>
+                        <ul style={{ paddingLeft: 16, margin: 0 }}>
+                          {g.bench.length === 0 ? (
+                            <li>Ingen</li>
+                          ) : (
+                            g.bench.map((id) => {
+                              const p = players.find((x) => x.id === id);
+                              return <li key={id}>{p?.name ?? "Okänd"}</li>;
+                            })
+                          )}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+
       {/* MATCHHISTORIK – också alltid synlig */}
       <section className="card" style={{ marginTop: 16 }}>
         <div
@@ -372,7 +642,7 @@ export default function App() {
             alignItems: "center",
             cursor: "pointer",
           }}
-          onClick={() => setShowHistory((v) => !v)}
+          onClick={() => setShowHistory(!showHistory)}
         >
           <h2>Matchhistorik</h2>
           <span style={{ fontSize: 13, opacity: 0.8 }}>
@@ -454,7 +724,7 @@ export default function App() {
       {/* LOGIN / ADMIN-KONTROLLER */}
       {!isAdmin ? (
         <section className="card">
-          <button className="btn-primary" onClick={() => setShowLogin((v) => !v)}>
+          <button className="btn-primary" onClick={() => setShowLogin(!showLogin)}>
             {showLogin ? "Stäng login" : "Logga in som admin"}
           </button>
 
@@ -494,7 +764,7 @@ export default function App() {
           <section className="card">
         <button
           className="btn-ghost"
-          onClick={() => setShowPlayerSection((v) => !v)}
+          onClick={() => setShowPlayerSection(!showPlayerSection)}
           style={{ marginBottom: 8 }}
         >
           {showPlayerSection ? "Dölj lägg till/ta bort spelare" : "Lägg till/ta bort spelare"}
@@ -540,7 +810,7 @@ export default function App() {
 
           <button
             className="btn-ghost"
-            onClick={() => setDeleteMode((v) => !v)}
+            onClick={() => setDeleteMode(!deleteMode)}
           >
             {deleteMode ? "Avsluta ta bort-läge" : "Ta bort spelare"}
           </button>
