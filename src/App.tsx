@@ -50,6 +50,7 @@ export default function App() {
   const [loginName, setLoginName] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showPlayerSection, setShowPlayerSection] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     const loadAll = async () => {
@@ -133,10 +134,9 @@ export default function App() {
   const finalizeGame = async () => {
     if (!selectedGame) return alert("Ingen match vald");
 
-    // 🔒 Kolla om matchen är låst
     const game = games.find((g) => g.id === selectedGame);
     if (game?.locked) {
-      alert("Den här matchen är låst och kan inte ändras. Lås upp matchen först om du vill ändra resultat.");
+      alert("Den här matchen är låst och kan inte ändras.");
       return;
     }
 
@@ -146,6 +146,7 @@ export default function App() {
     if (Number.isNaN(a) || Number.isNaN(b)) {
       return alert("Skriv in poäng för båda lagen.");
     }
+
     if (a === b) {
       return alert("Matchen kan inte sluta lika om du ska ha plus/minus.");
     }
@@ -155,17 +156,18 @@ export default function App() {
 
     let gameStats = stats.filter((s) => s.game_id === selectedGame);
 
-    // ⚠️ Om det redan finns plus/minus för denna match: fråga om vi ska skriva över
+    // om det redan finns plus/minus: fråga om overwrite
     if (gameStats.length > 0) {
       const anyNonZero = gameStats.some((s) => s.plus_minus !== 0);
       if (anyNonZero) {
         const ok = confirm(
-          "Det finns redan plus/minus för den här matchen. Vill du skriva över dem med det nya resultatet?"
+          "Det finns redan plus/minus för den här matchen. Vill du skriva över dem?"
         );
         if (!ok) return;
       }
     }
 
+    // om inga stats: skapa från teamA/teamB
     if (gameStats.length === 0) {
       if (teamA.length + teamB.length === 0) {
         return alert("Välj lag A och lag B först.");
@@ -200,7 +202,7 @@ export default function App() {
       setStats((prev) => [...prev, ...gameStats]);
     }
 
-    // uppdatera plus/minus för stats-raderna (denna match)
+    // uppdatera plus/minus i DB
     const updates = gameStats.map((st) => {
       const pm = st.team === winnerTeam ? diff : -diff;
       return { id: st.id, plus_minus: pm };
@@ -210,29 +212,33 @@ export default function App() {
       await supabase.from("stats").update({ plus_minus: u.plus_minus }).eq("id", u.id);
     }
 
-    // spara resultatet på game också
-    const { data: updatedGame, error: gameUpdateError } = await supabase
+    // spara själva poängen på games (om du använder dessa kolumner)
+    const { data: updatedGameRow, error: updateGameError } = await supabase
       .from("games")
-      .update({ score_team_a: a, score_team_b: b })
+      .update({ score_team_a: a, score_team_b: b, locked: true }) // 👈 auto-lås här
       .eq("id", selectedGame)
       .select()
       .single();
 
-    if (gameUpdateError) {
-      console.error(gameUpdateError);
-    } else if (updatedGame) {
+    if (updateGameError) {
+      console.error(updateGameError);
+      alert("Plus/minus uppdaterat, men kunde inte låsa matchen.");
+    }
+
+    // hämta om stats från DB → leaderboard uppdateras
+    const { data: refreshedStats } = await supabase.from("stats").select("*");
+    if (refreshedStats) {
+      setStats(refreshedStats as Stat[]);
+    }
+
+    // uppdatera games i state så locked & score syns direkt i UI
+    if (updatedGameRow) {
       setGames((prev) =>
-        prev.map((g) => (g.id === updatedGame.id ? (updatedGame as Game) : g))
+        prev.map((g) => (g.id === updatedGameRow.id ? (updatedGameRow as Game) : g))
       );
     }
 
-    // hämta alla stats igen → leaderboard uppdateras
-    const { data: refreshed } = await supabase.from("stats").select("*");
-    if (refreshed) {
-      setStats(refreshed as Stat[]);
-    }
-
-    alert("Plus/minus uppdaterat!");
+    alert("Plus/minus uppdaterat och matchen är nu låst!");
   };
 
   // LEADERBOARD
@@ -264,6 +270,10 @@ export default function App() {
       };
     })
     .sort((a, b) => b.totalPM - a.totalPM);
+
+  const matchHistory = games
+    .filter((g) => g.score_team_a != null && g.score_team_b != null)
+    .sort((a, b) => (a.date < b.date ? 1 : -1)); // senaste först
 
   const selectedGameObj = games.find((g) => g.id === selectedGame) || null;
   const historyGame = games.find((g) => g.id === historyGameId) || null;
@@ -298,6 +308,39 @@ export default function App() {
 
   const handleLogout = () => {
     setIsAdmin(false);
+  };
+
+  const handleDeleteGame = async (gameId: string) => {
+    if (!isAdmin) return;
+
+    const game = games.find((g) => g.id === gameId);
+    const label = game ? `${game.date} — ${game.name}` : "denna match";
+
+    const ok = confirm(
+      `Ta bort matchen ${label}? Alla plus/minus för den matchen kommer försvinna.`
+    );
+    if (!ok) return;
+
+    const { error } = await supabase.from("games").delete().eq("id", gameId);
+    if (error) {
+      console.error(error);
+      alert("Kunde inte ta bort matchen");
+      return;
+    }
+
+    // uppdatera state lokalt
+    setGames((prev) => prev.filter((g) => g.id !== gameId));
+    setStats((prev) => prev.filter((s) => s.game_id !== gameId));
+
+    if (selectedGame === gameId) {
+      setSelectedGame(null);
+      setTeamA([]);
+      setTeamB([]);
+      setScoreA("");
+      setScoreB("");
+    }
+
+    alert("Matchen togs bort.");
   };
 
   return (
@@ -335,58 +378,90 @@ export default function App() {
       </section>
 
       {/* MATCHHISTORIK – också alltid synlig */}
-      <section className="card">
-        <div className="card-header">
+      <section className="card" style={{ marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            cursor: "pointer",
+          }}
+          onClick={() => setShowHistory((v) => !v)}
+        >
           <h2>Matchhistorik</h2>
-        </div>
-        <div className="row">
-          {games.map((g) => (
-            <button
-              key={g.id}
-              onClick={() => setHistoryGameId(g.id)}
-              style={{
-                padding: "4px 8px",
-                border: historyGameId === g.id ? "2px solid black" : "1px solid #ccc",
-                borderRadius: 4,
-                background: "#f9f9f9",
-              }}
-            >
-              {g.date} — {g.name}
-            </button>
-          ))}
+          <span style={{ fontSize: 13, opacity: 0.8 }}>
+            {showHistory ? "▲ Dölj" : "▼ Visa"}
+          </span>
         </div>
 
-        {historyGame && (
-          <div style={{ marginTop: 12 }}>
-            <h3>
-              {historyGame.date} — {historyGame.name}
-            </h3>
-            <p>
-              Resultat:{" "}
-              {historyGame.score_team_a != null && historyGame.score_team_b != null
-                ? `${historyGame.score_team_a} - ${historyGame.score_team_b}`
-                : "Inget resultat sparat"}
-            </p>
+        {showHistory && (
+          <>
+            {matchHistory.length === 0 ? (
+              <p style={{ opacity: 0.7, fontSize: 14 }}>Inga matcher med resultat ännu.</p>
+            ) : (
+              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+                {matchHistory.map((g) => {
+                  const a = g.score_team_a!;
+                  const b = g.score_team_b!;
+                  const winner =
+                    a === b ? "—" : a > b ? "Lag A" : "Lag B";
 
-            <div style={{ display: "flex", gap: 40 }}>
-              <div>
-                <h4>Lag A</h4>
-                <ul>
-                  {historyStatsA.map((s) => (
-                    <li key={s.id}>{playerNameById(s.player_id)}</li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <h4>Lag B</h4>
-                <ul>
-                  {historyStatsB.map((s) => (
-                    <li key={s.id}>{playerNameById(s.player_id)}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
+                  const playersA = stats
+                    .filter((s) => s.game_id === g.id && s.team === "A")
+                    .map((s) => players.find((p) => p.id === s.player_id)?.name)
+                    .filter(Boolean);
+
+                  const playersB = stats
+                    .filter((s) => s.game_id === g.id && s.team === "B")
+                    .map((s) => players.find((p) => p.id === s.player_id)?.name)
+                    .filter(Boolean);
+
+                  return (
+                    <li
+                      key={g.id}
+                      style={{
+                        marginTop: 6,
+                        padding: "6px 10px",
+                        borderRadius: 8,
+                        border: "1px solid #4b5563",
+                        background: "#020617",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        fontSize: 14,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 500 }}>
+                          {g.date} — {g.name}
+                        </div>
+                        <div style={{ opacity: 0.8 }}>
+                          Resultat: {a} – {b} ({winner})
+                        </div>
+                        <div style={{ marginTop: 6, fontSize: 13 }}>
+                          <div><b>Lag A:</b> {playersA.join(", ") || "—"}</div>
+                          <div><b>Lag B:</b> {playersB.join(", ") || "—"}</div>
+                        </div>
+                      </div>
+
+                      {/* Ta bort-knapp för admin */}
+                      {isAdmin && (
+                        <button
+                          style={{ marginLeft: 8, fontSize: 12 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteGame(g.id);
+                          }}
+                        >
+                          Ta bort
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </>
         )}
       </section>
 
