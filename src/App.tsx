@@ -45,6 +45,12 @@ export default function App() {
 
   const [deleteMode, setDeleteMode] = useState(false);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const [loginName, setLoginName] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [showPlayerSection, setShowPlayerSection] = useState(false);
+
   useEffect(() => {
     const loadAll = async () => {
       const { data: p } = await supabase.from("players").select("*").order("name");
@@ -274,17 +280,172 @@ export default function App() {
   const playerNameById = (id: string) =>
     players.find((p) => p.id === id)?.name ?? "(okänd spelare)";
 
+  const handleLogin = () => {
+    const name = loginName.trim();
+    const pass = loginPassword;
+
+    // hårdkodat admin-konto
+    if (name === "admin" && pass === "B123") {
+      setIsAdmin(true);
+      setShowLogin(false);
+      setLoginName("");
+      setLoginPassword("");
+      alert("Inloggad som admin");
+    } else {
+      alert("Fel användarnamn eller lösenord");
+    }
+  };
+
+  const handleLogout = () => {
+    setIsAdmin(false);
+  };
+
   return (
     <div className="app">
       <h1>Basket Plus/Minus</h1>
 
-      {/* SPELARE */}
+      {/* LEADERBOARD – alltid synlig */}
       <section className="card">
         <div className="card-header">
-          <h2>Spelare</h2>
+          <h2>Leaderboard (total plus/minus)</h2>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Spelare</th>
+              <th>Total +/− (W/L)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {leaderboard.map((row) => (
+              <tr key={row.player.id}>
+                <td>{row.player.name}</td>
+                <td>
+                  {row.totalPM >= 0 ? "+" : ""}
+                  {row.totalPM}
+                  {"  "}
+                  <span style={{ opacity: 0.7, marginLeft: 4 }}>
+                    ({row.wins}/{row.losses})
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      {/* MATCHHISTORIK – också alltid synlig */}
+      <section className="card">
+        <div className="card-header">
+          <h2>Matchhistorik</h2>
+        </div>
+        <div className="row">
+          {games.map((g) => (
+            <button
+              key={g.id}
+              onClick={() => setHistoryGameId(g.id)}
+              style={{
+                padding: "4px 8px",
+                border: historyGameId === g.id ? "2px solid black" : "1px solid #ccc",
+                borderRadius: 4,
+                background: "#f9f9f9",
+              }}
+            >
+              {g.date} — {g.name}
+            </button>
+          ))}
         </div>
 
-        <div className="row" style={{ marginBottom: 8 }}>
+        {historyGame && (
+          <div style={{ marginTop: 12 }}>
+            <h3>
+              {historyGame.date} — {historyGame.name}
+            </h3>
+            <p>
+              Resultat:{" "}
+              {historyGame.score_team_a != null && historyGame.score_team_b != null
+                ? `${historyGame.score_team_a} - ${historyGame.score_team_b}`
+                : "Inget resultat sparat"}
+            </p>
+
+            <div style={{ display: "flex", gap: 40 }}>
+              <div>
+                <h4>Lag A</h4>
+                <ul>
+                  {historyStatsA.map((s) => (
+                    <li key={s.id}>{playerNameById(s.player_id)}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h4>Lag B</h4>
+                <ul>
+                  {historyStatsB.map((s) => (
+                    <li key={s.id}>{playerNameById(s.player_id)}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+
+      {/* LOGIN / ADMIN-KONTROLLER */}
+      {!isAdmin ? (
+        <section className="card">
+          <button className="btn-primary" onClick={() => setShowLogin((v) => !v)}>
+            {showLogin ? "Stäng login" : "Logga in som admin"}
+          </button>
+
+          {showLogin && (
+            <div style={{ marginTop: 12 }}>
+              <input
+                type="text"
+                placeholder="Användarnamn"
+                value={loginName}
+                onChange={(e) => setLoginName(e.target.value)}
+                style={{ display: "block", marginBottom: 8, width: "100%" }}
+              />
+              <input
+                type="password"
+                placeholder="Lösenord"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                style={{ display: "block", marginBottom: 8, width: "100%" }}
+              />
+              <button className="btn-primary" onClick={handleLogin}>Logga in</button>
+            </div>
+          )}
+        </section>
+      ) : (
+        <>
+          <section className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2>Admin-läge</h2>
+              <button className="btn-ghost" onClick={handleLogout}>Logga ut</button>
+            </div>
+            <p style={{ opacity: 0.7, fontSize: 13, marginTop: 4 }}>
+              Du är inloggad som admin och kan ändra spelare, matcher och resultat.
+            </p>
+          </section>
+
+          {/* SPELARE */}
+          <section className="card">
+        <button
+          className="btn-ghost"
+          onClick={() => setShowPlayerSection((v) => !v)}
+          style={{ marginBottom: 8 }}
+        >
+          {showPlayerSection ? "Dölj lägg till/ta bort spelare" : "Lägg till/ta bort spelare"}
+        </button>
+
+        {showPlayerSection && (
+          <>
+            <div className="card-header">
+              <h2>Spelare</h2>
+            </div>
+
+            <div className="row" style={{ marginBottom: 8 }}>
           <input
             type="text"
             placeholder="Namn på spelare"
@@ -354,6 +515,8 @@ export default function App() {
             </li>
           ))}
         </ul>
+          </>
+        )}
       </section>
 
       {/* SKAPA MATCH */}
@@ -545,92 +708,8 @@ export default function App() {
           </section>
         </>
       )}
-
-      {/* LEADERBOARD */}
-      <section className="card">
-        <div className="card-header">
-          <h2>Leaderboard (total plus/minus)</h2>
-        </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Spelare</th>
-              <th>Total +/−</th>
-            </tr>
-          </thead>
-          <tbody>
-            {leaderboard.map((row) => (
-              <tr key={row.player.id}>
-                <td>{row.player.name}</td>
-                <td>
-                  {row.totalPM >= 0 ? "+" : ""}
-                  {row.totalPM}
-                  {"  "}
-                  <span style={{ opacity: 0.7, marginLeft: 4 }}>
-                    ({row.wins}/{row.losses})
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      {/* MATCHHISTORIK */}
-      <section className="card">
-        <div className="card-header">
-          <h2>Matchhistorik</h2>
-        </div>
-        <div className="row">
-          {games.map((g) => (
-            <button
-              key={g.id}
-              onClick={() => setHistoryGameId(g.id)}
-              style={{
-                padding: "4px 8px",
-                border: historyGameId === g.id ? "2px solid black" : "1px solid #ccc",
-                borderRadius: 4,
-                background: "#f9f9f9",
-              }}
-            >
-              {g.date} — {g.name}
-            </button>
-          ))}
-        </div>
-
-        {historyGame && (
-          <div style={{ marginTop: 12 }}>
-            <h3>
-              {historyGame.date} — {historyGame.name}
-            </h3>
-            <p>
-              Resultat:{" "}
-              {historyGame.score_team_a != null && historyGame.score_team_b != null
-                ? `${historyGame.score_team_a} - ${historyGame.score_team_b}`
-                : "Inget resultat sparat"}
-            </p>
-
-            <div style={{ display: "flex", gap: 40 }}>
-              <div>
-                <h4>Lag A</h4>
-                <ul>
-                  {historyStatsA.map((s) => (
-                    <li key={s.id}>{playerNameById(s.player_id)}</li>
-                  ))}
-                </ul>
-              </div>
-              <div>
-                <h4>Lag B</h4>
-                <ul>
-                  {historyStatsB.map((s) => (
-                    <li key={s.id}>{playerNameById(s.player_id)}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </div>
-        )}
-      </section>
+        </>
+      )}
     </div>
   );
 }
